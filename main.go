@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	_ "github.com/lib/pq"
 	"net/http"
 	"strings"
 	"sync/atomic"
