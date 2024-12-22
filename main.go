@@ -1,16 +1,33 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/pedroomedicina/chirpy/internal/database"
+	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries      *database.Queries
+	platform       string
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }
 
 func respondWithError(w http.ResponseWriter, code int, message string) {
@@ -52,6 +69,35 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 		cfg.fileserverHits.Add(1)
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
+	var reqBody struct {
+		Email string `json:"email"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&reqBody)
+	if err != nil || reqBody.Email == "" {
+		respondWithError(w, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+		return
+	}
+
+	ctx := context.Background()
+	dbUser, err := cfg.dbQueries.CreateUser(ctx, reqBody.Email)
+	if err != nil {
+		log.Printf("Error creating user: %v", err)
+		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+		return
+	}
+
+	apiUser := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+
+	respondWithJSON(w, http.StatusCreated, apiUser)
 }
 
 func (cfg *apiConfig) handleValidateChirp(w http.ResponseWriter, r *http.Request) {
@@ -98,17 +144,39 @@ func (cfg *apiConfig) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (cfg *apiConfig) handleReset(w http.ResponseWriter, _ *http.Request) {
+	if cfg.platform != "dev" {
+		respondWithError(w, http.StatusForbidden, http.StatusText(http.StatusForbidden))
+		return
+	}
+
+	ctx := context.Background()
+	err := cfg.dbQueries.DeleteAllUsers(ctx)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+		return
+	}
+
 	cfg.fileserverHits.Store(0)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, err := w.Write([]byte("Hits counter reset to 0"))
+	_, err = w.Write([]byte("Hits counter reset to 0 and deleted all users"))
 	if err != nil {
 		return
 	}
 }
 
 func main() {
-	apiCfg := &apiConfig{}
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	apiCfg := &apiConfig{
+		dbQueries: database.New(db),
+		platform:  os.Getenv("PLATFORM"),
+	}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -125,13 +193,14 @@ func main() {
 	mux.Handle("GET /admin/metrics", http.HandlerFunc(apiCfg.handleMetrics))
 	mux.Handle("POST /admin/reset", http.HandlerFunc(apiCfg.handleReset))
 	mux.Handle("POST /api/validate_chirp", http.HandlerFunc(apiCfg.handleValidateChirp))
+	mux.Handle("POST /api/users", http.HandlerFunc(apiCfg.handleCreateUser))
 
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
 	}
 
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err != nil {
 		panic(err)
 	}
