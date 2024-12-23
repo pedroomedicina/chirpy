@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
@@ -28,6 +29,14 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+}
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
 func respondWithError(w http.ResponseWriter, code int, message string) {
@@ -100,29 +109,53 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, http.StatusCreated, apiUser)
 }
 
-func (cfg *apiConfig) handleValidateChirp(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) validateChirp(chirp Chirp) error {
+	if len(chirp.Body) > 140 {
+		return errors.New("Chirp too long")
+	}
+
+	return nil
+}
+
+func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondWithError(w, http.StatusMethodNotAllowed, http.StatusText(http.StatusMethodNotAllowed))
 		return
 	}
 
-	var chirp struct {
-		Body string `json:"body"`
-	}
+	var chirp Chirp
 	err := json.NewDecoder(r.Body).Decode(&chirp)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 
-	if len(chirp.Body) > 140 {
-		respondWithError(w, http.StatusBadRequest, "Chirp too long")
+	err = cfg.validateChirp(chirp)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, err.Error())
+	}
+
+	cleanedChirpBody := cleanProfanity(chirp.Body)
+
+	ctx := context.Background()
+	dbChirp, err := cfg.dbQueries.CreateChirp(ctx, database.CreateChirpParams{
+		Body:   cleanedChirpBody,
+		UserID: chirp.UserID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
 		return
 	}
 
-	cleanedBody := cleanProfanity(chirp.Body)
+	apiChirp := Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserID:    dbChirp.UserID,
+	}
 
-	respondWithJSON(w, http.StatusOK, map[string]string{"cleaned_body": cleanedBody})
+	respondWithJSON(w, http.StatusCreated, apiChirp)
 }
 
 func (cfg *apiConfig) handleMetrics(w http.ResponseWriter, _ *http.Request) {
@@ -166,7 +199,10 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, _ *http.Request) {
 }
 
 func main() {
-	godotenv.Load()
+	err := godotenv.Load()
+	if err != nil {
+		return
+	}
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -192,7 +228,7 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", fileServer)))
 	mux.Handle("GET /admin/metrics", http.HandlerFunc(apiCfg.handleMetrics))
 	mux.Handle("POST /admin/reset", http.HandlerFunc(apiCfg.handleReset))
-	mux.Handle("POST /api/validate_chirp", http.HandlerFunc(apiCfg.handleValidateChirp))
+	mux.Handle("POST /api/chirps", http.HandlerFunc(apiCfg.handleCreateChirp))
 	mux.Handle("POST /api/users", http.HandlerFunc(apiCfg.handleCreateUser))
 
 	server := &http.Server{
