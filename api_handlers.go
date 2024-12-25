@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/pedroomedicina/chirpy/internal/auth"
 	"github.com/pedroomedicina/chirpy/internal/database"
 	"log"
 	"net/http"
@@ -27,16 +28,27 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 
 func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var reqBody struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	err := json.NewDecoder(r.Body).Decode(&reqBody)
-	if err != nil || reqBody.Email == "" {
+	if err != nil || reqBody.Email == "" || reqBody.Password == "" {
 		respondWithError(w, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
 		return
 	}
 
-	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), reqBody.Email)
+	hashedPassword, err := auth.HashPassword(reqBody.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          reqBody.Email,
+		HashedPassword: hashedPassword,
+	})
+
 	if err != nil {
 		log.Printf("Error creating user: %v", err)
 		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
@@ -51,6 +63,44 @@ func (cfg *apiConfig) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondWithJSON(w, http.StatusCreated, apiUser)
+}
+
+func (cfg *apiConfig) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var reqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	err := json.NewDecoder(r.Body).Decode(&reqBody)
+	if err != nil || reqBody.Email == "" || reqBody.Password == "" {
+		respondWithError(w, http.StatusBadRequest, http.StatusText(http.StatusBadRequest))
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.GetUserByEmail(r.Context(), reqBody.Email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
+		} else {
+			respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+		}
+		return
+	}
+
+	err = auth.CheckPasswordHash(reqBody.Password, dbUser.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
+		return
+	}
+
+	apiUser := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+
+	respondWithJSON(w, http.StatusOK, apiUser)
 }
 
 func (cfg *apiConfig) validateChirp(chirp Chirp) error {
