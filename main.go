@@ -60,6 +60,7 @@ func main() {
 	apiCfg := &apiConfig{
 		dbQueries: database.New(db),
 		platform:  os.Getenv("PLATFORM"),
+		jwtSecret: os.Getenv("JWT_SECRET"),
 	}
 	mux := http.NewServeMux()
 
