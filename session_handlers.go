@@ -161,3 +161,52 @@ func (cfg *apiConfig) handleRevoke(w http.ResponseWriter, r *http.Request) {
 
 	respondWithJSON(w, http.StatusNoContent, "")
 }
+
+func (cfg *apiConfig) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	tokenString, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Missing or invalid authorization token")
+		return
+	}
+
+	userID, err := auth.ValidateJWT(tokenString, cfg.jwtSecret)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Invalid or expired token")
+		return
+	}
+
+	var reqBody struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	err = json.NewDecoder(r.Body).Decode(&reqBody)
+	if err != nil || reqBody.Email == "" || reqBody.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "Email and password are required")
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(reqBody.Password)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Invalid or expired password")
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
+		ID:             userID,
+		Email:          reqBody.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Error updating user")
+		return
+	}
+
+	apiUser := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+
+	respondWithJSON(w, http.StatusOK, apiUser)
+}
