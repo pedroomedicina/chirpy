@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/pedroomedicina/chirpy/internal/auth"
 	"github.com/pedroomedicina/chirpy/internal/database"
 	"net/http"
 	"sync/atomic"
@@ -16,6 +17,7 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	jwtSecret      string
+	polkaKey       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -73,6 +75,12 @@ func (cfg *apiConfig) handleReset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) handlePolkaWebHook(w http.ResponseWriter, r *http.Request) {
+	reqApiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil || reqApiKey != cfg.polkaKey {
+		respondWithError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
+		return
+	}
+
 	var reqBody struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -80,7 +88,7 @@ func (cfg *apiConfig) handlePolkaWebHook(w http.ResponseWriter, r *http.Request)
 		} `json:"data"`
 	}
 
-	err := json.NewDecoder(r.Body).Decode(&reqBody)
+	err = json.NewDecoder(r.Body).Decode(&reqBody)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
