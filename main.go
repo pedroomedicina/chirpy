@@ -77,14 +77,19 @@ func main() {
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", fileServer)))
 	mux.Handle("GET /admin/metrics", http.HandlerFunc(apiCfg.handleMetrics))
 	mux.Handle("POST /admin/reset", http.HandlerFunc(apiCfg.handleReset))
+
 	mux.Handle("POST /api/chirps", http.HandlerFunc(apiCfg.handleCreateChirp))
 	mux.Handle("POST /api/users", http.HandlerFunc(apiCfg.handleCreateUser))
 	mux.Handle("PUT /api/users", http.HandlerFunc(apiCfg.handleUpdateUser))
+
 	mux.Handle("GET /api/chirps", http.HandlerFunc(apiCfg.handleGetAllChirps))
 	mux.Handle("GET /api/chirps/{id}", http.HandlerFunc(apiCfg.handleGetChirpByID))
+	mux.Handle("DELETE /api/chirps/{id}", http.HandlerFunc(apiCfg.handleDeleteChirp))
+
 	mux.Handle("POST /api/login", http.HandlerFunc(apiCfg.handleLogin))
 	mux.Handle("POST /api/refresh", http.HandlerFunc(apiCfg.handleRefresh))
 	mux.Handle("POST /api/revoke", http.HandlerFunc(apiCfg.handleRevoke))
+	mux.Handle("POST /api/polka/webhooks", http.HandlerFunc(apiCfg.handlePolkaWebHook))
 
 	server := &http.Server{
 		Addr:    ":8080",
