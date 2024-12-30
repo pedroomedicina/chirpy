@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/google/uuid"
 	"github.com/pedroomedicina/chirpy/internal/auth"
 	"github.com/pedroomedicina/chirpy/internal/database"
 	"net/http"
+	"strings"
 )
 
 func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +64,42 @@ func (cfg *apiConfig) handleCreateChirp(w http.ResponseWriter, r *http.Request) 
 	respondWithJSON(w, http.StatusCreated, apiChirp)
 }
 
+func validateSortDirection(sort string) (string, error) {
+	sort = strings.ToUpper(sort)
+
+	if sort == "" {
+		return "ASC", nil
+	}
+
+	if sort == "ASC" || sort == "DESC" {
+		return sort, nil
+	}
+
+	return "", fmt.Errorf("invalid sort direction: %s", sort)
+}
+
+func scanChirps(rows *sql.Rows) ([]Chirp, error) {
+	var chirps []Chirp
+	for rows.Next() {
+		var chirp Chirp
+		err := rows.Scan(&chirp.ID, &chirp.CreatedAt, &chirp.UpdatedAt, &chirp.Body, &chirp.UserID)
+		if err != nil {
+			return nil, err
+		}
+		chirps = append(chirps, chirp)
+	}
+	return chirps, rows.Err()
+}
+
 func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request) {
+	sortQueryParam := r.URL.Query().Get("sort")
+	validatedSort, err := validateSortDirection(sortQueryParam)
+	if err != nil {
+		fmt.Printf("error when validating sort: %s, validated sort:%s\n", err.Error(), validatedSort)
+		respondWithError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	authorId := r.URL.Query().Get("author_id")
 	if authorId != "" {
 		authorUuid, err := uuid.Parse(authorId)
@@ -71,9 +108,22 @@ func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		chirps, err := cfg.dbQueries.GetChirpsByUserId(r.Context(), authorUuid)
+		query := fmt.Sprintf("SELECT * FROM chirps WHERE user_id = '%s' ORDER BY created_at %s", authorUuid, sortQueryParam)
+		rows, err := cfg.db.QueryContext(r.Context(), query)
 		if err != nil {
 			respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+			return
+		}
+		defer func(rows *sql.Rows) {
+			err := rows.Close()
+			if err != nil {
+
+			}
+		}(rows)
+
+		chirps, err := scanChirps(rows)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 
@@ -81,9 +131,22 @@ func (cfg *apiConfig) handleGetAllChirps(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	chirps, err := cfg.dbQueries.GetAllChirps(r.Context())
+	query := fmt.Sprintf("SELECT * FROM chirps ORDER BY created_at %s", sortQueryParam)
+	rows, err := cfg.db.QueryContext(r.Context(), query)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, http.StatusText(http.StatusInternalServerError))
+		return
+	}
+	defer func(rows *sql.Rows) {
+		err := rows.Close()
+		if err != nil {
+
+		}
+	}(rows)
+
+	chirps, err := scanChirps(rows)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

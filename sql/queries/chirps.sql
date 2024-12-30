@@ -11,8 +11,7 @@ RETURNING *;
 
 -- name: GetAllChirps :many
 SELECT *
-FROM chirps
-ORDER BY created_at;
+FROM chirps;
 
 -- name: GetChirpByID :one
 SELECT *
@@ -26,5 +25,4 @@ WHERE id = $1;
 -- name: GetChirpsByUserId :many
 SELECT *
 FROM chirps
-WHERE user_id = $1
-ORDER BY created_at;
+WHERE user_id = $1;

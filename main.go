@@ -58,6 +58,7 @@ func main() {
 	}
 
 	apiCfg := &apiConfig{
+		db:        db,
 		dbQueries: database.New(db),
 		platform:  os.Getenv("PLATFORM"),
 		jwtSecret: os.Getenv("JWT_SECRET"),
